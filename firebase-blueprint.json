@@ -1,0 +1,101 @@
+{
+  "entities": {
+    "user": {
+      "title": "User",
+      "description": "User profile authenticated via Google Account",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "email": { "type": "string" },
+        "displayName": { "type": "string" },
+        "photoURL": { "type": "string" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["id", "email"]
+    },
+    "gallery": {
+      "title": "Gallery",
+      "description": "Photo gallery delivered to clients",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "photographerId": { "type": "string" },
+        "shareId": { "type": "string" },
+        "title": { "type": "string" },
+        "clientName": { "type": "string" },
+        "shootDate": { "type": "string" },
+        "coverPhotoId": { "type": "string" },
+        "viewCount": { "type": "number" },
+        "downloadCount": { "type": "number" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["id", "shareId", "title"]
+    },
+    "photo": {
+      "title": "Photo",
+      "description": "Photo item in a gallery",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "galleryId": { "type": "string" },
+        "collectionId": { "type": "string" },
+        "fileName": { "type": "string" },
+        "width": { "type": "number" },
+        "height": { "type": "number" },
+        "aspectRatio": { "type": "number" },
+        "order": { "type": "number" },
+        "hidden": { "type": "boolean" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["id", "galleryId", "fileName"]
+    },
+    "favorite": {
+      "title": "Favorite",
+      "description": "Client heart favorite for a photo",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "galleryId": { "type": "string" },
+        "photoId": { "type": "string" },
+        "userId": { "type": "string" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["id", "galleryId", "photoId"]
+    },
+    "activity": {
+      "title": "Activity",
+      "description": "Gallery view, download or selection event",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "galleryId": { "type": "string" },
+        "type": { "type": "string" },
+        "details": { "type": "string" },
+        "timestamp": { "type": "string" }
+      },
+      "required": ["id", "galleryId", "type"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "user",
+      "description": "Authenticated user profiles"
+    },
+    "/galleries/{galleryId}": {
+      "schema": "gallery",
+      "description": "Client photo galleries"
+    },
+    "/galleries/{galleryId}/photos/{photoId}": {
+      "schema": "photo",
+      "description": "Photos in a gallery"
+    },
+    "/galleries/{galleryId}/favorites/{favoriteId}": {
+      "schema": "favorite",
+      "description": "Client favorited photos"
+    },
+    "/galleries/{galleryId}/activities/{activityId}": {
+      "schema": "activity",
+      "description": "Gallery activity log"
+    }
+  }
+}

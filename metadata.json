@@ -1,0 +1,6 @@
+{
+  "name": "Pitapixel — Client Photo Delivery",
+  "description": "Minimal, fast photo delivery platform for photographers to share client galleries through private links.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
