@@ -299,7 +299,7 @@ export const PhotosManager: React.FC<PhotosManagerProps> = ({
   // Delete photo
   const handleDeletePhoto = async (photoId: string) => {
     if (!window.confirm('Delete this photo from the gallery?')) return;
-    await deletePhotoDb(photoId);
+    await deletePhotoDb(photoId, gallery.id);
     onPhotosChange(photos.filter((p) => p.id !== photoId));
   };
 

@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
-import { X, Plus } from 'lucide-react';
+import { X, Plus, Loader2 } from 'lucide-react';
 import { Gallery } from '../../types';
-import { saveGallery } from '../../storage/db';
+import { createGallery } from '../../storage/db';
 
 interface CreateGalleryModalProps {
   isOpen: boolean;
@@ -13,7 +13,6 @@ interface CreateGalleryModalProps {
 export const CreateGalleryModal: React.FC<CreateGalleryModalProps> = ({
   isOpen,
   onClose,
-  photographerId,
   onGalleryCreated,
 }) => {
   const [title, setTitle] = useState('');
@@ -21,8 +20,9 @@ export const CreateGalleryModal: React.FC<CreateGalleryModalProps> = ({
   const [shootDate, setShootDate] = useState(
     new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })
   );
-  const [password, setPassword] = useState('');
   const [customSlug, setCustomSlug] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   if (!isOpen) return null;
 
@@ -30,43 +30,24 @@ export const CreateGalleryModal: React.FC<CreateGalleryModalProps> = ({
     e.preventDefault();
     if (!title.trim()) return;
 
-    // Generate clean, deterministic unique gallery identifier
-    const cleanedCustom = customSlug.trim().toLowerCase().replace(/[^a-z0-9_-]/g, '');
-    const autoSlug = title
-      .trim()
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, '-')
-      .replace(/(^-|-$)/g, '');
-    const shortSuffix = Math.random().toString(36).substring(2, 6);
-    // Unique deterministic gallery identifier used across paths
-    const uniqueId = cleanedCustom || (autoSlug ? `${autoSlug}-${shortSuffix}` : `gallery-${shortSuffix}`);
-    const galleryId = uniqueId;
-    const shareId = uniqueId;
+    try {
+      setLoading(true);
+      setError(null);
 
-    const newGallery: Gallery = {
-      id: galleryId,
-      photographerId,
-      shareId,
-      title: title.trim(),
-      clientName: clientName.trim() || undefined,
-      shootDate: shootDate.trim(),
-      coverFocalPoint: { x: 50, y: 28 },
-      coverFramingSummary: 'AI smart framing keeps subject heads in upper frame',
-      password: password.trim() || undefined,
-      settings: {
-        allowDownload: true,
-        allowFavorites: true,
-        sizes: ['web', 'original'],
-      },
-      collections: [],
-      viewCount: 0,
-      downloadCount: 0,
-      createdAt: new Date().toISOString(),
-    };
+      const res = await createGallery({
+        title: title.trim(),
+        clientName: clientName.trim() || undefined,
+        shootDate: shootDate.trim(),
+        customSlug: customSlug.trim() || undefined,
+      });
 
-    await saveGallery(newGallery);
-    onGalleryCreated(newGallery);
-    onClose();
+      onGalleryCreated(res.gallery);
+      onClose();
+    } catch (err: any) {
+      setError(err.message || 'Failed to create gallery');
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
@@ -78,18 +59,24 @@ export const CreateGalleryModal: React.FC<CreateGalleryModalProps> = ({
               Create New Gallery
             </h2>
             <p className="text-xs text-zinc-500 dark:text-zinc-400">
-              Generates a secure, unguessable delivery link
+              Saved directly to Cloudinary storage
             </p>
           </div>
           <button
             onClick={onClose}
-            className="text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200"
+            className="text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200 cursor-pointer"
           >
             <X className="h-4 w-4" />
           </button>
         </div>
 
         <form onSubmit={handleSubmit} className="mt-4 space-y-3.5">
+          {error && (
+            <div className="rounded-md bg-rose-50 p-2.5 text-xs text-rose-700 dark:bg-rose-950/60 dark:text-rose-200">
+              {error}
+            </div>
+          )}
+
           <div>
             <label className="block text-xs font-medium text-zinc-700 dark:text-zinc-300">
               Gallery Title *
@@ -132,50 +119,47 @@ export const CreateGalleryModal: React.FC<CreateGalleryModalProps> = ({
 
           <div>
             <label className="block text-xs font-medium text-zinc-700 dark:text-zinc-300">
-              Short Link Slug (optional)
+              Custom Gallery ID / Slug (optional)
             </label>
             <div className="mt-1 flex items-center rounded-md border border-zinc-200 bg-white px-3 py-2 text-xs dark:border-zinc-800 dark:bg-zinc-800">
-              <span className="font-mono text-zinc-400 select-none">photos.app/g/</span>
+              <span className="font-mono text-zinc-400 select-none">/g/</span>
               <input
                 type="text"
                 value={customSlug}
                 onChange={(e) => setCustomSlug(e.target.value.toLowerCase().replace(/[^a-z0-9_-]/g, ''))}
-                placeholder={title ? title.toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 16) : 'e.g. vijana'}
+                placeholder="e.g. maya-daniel"
                 className="w-full bg-transparent font-mono text-zinc-900 focus:outline-hidden dark:text-white ml-0.5"
               />
             </div>
             <p className="mt-1 text-[10px] text-zinc-400">
-              Leave blank to automatically generate a clean short link.
+              Leave blank to automatically generate a 12-character random ID.
             </p>
-          </div>
-
-          <div>
-            <label className="block text-xs font-medium text-zinc-700 dark:text-zinc-300">
-              Optional Password
-            </label>
-            <input
-              type="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              placeholder="Leave blank for open link"
-              className="mt-1 w-full rounded-md border border-zinc-200 bg-white px-3 py-2 text-xs text-zinc-900 focus:border-zinc-900 focus:outline-hidden dark:border-zinc-800 dark:bg-zinc-800 dark:text-white dark:focus:border-zinc-100"
-            />
           </div>
 
           <div className="flex justify-end gap-2 pt-3">
             <button
               type="button"
               onClick={onClose}
-              className="px-4 py-2 text-xs font-medium text-zinc-600 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-white"
+              className="px-4 py-2 text-xs font-medium text-zinc-600 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-white cursor-pointer"
             >
               Cancel
             </button>
             <button
               type="submit"
-              className="flex items-center gap-1.5 rounded-md bg-zinc-900 px-4 py-2 text-xs font-medium text-white transition-colors hover:bg-zinc-800 dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-white"
+              disabled={loading || !title.trim()}
+              className="flex items-center gap-1.5 rounded-md bg-zinc-900 px-4 py-2 text-xs font-medium text-white transition-colors hover:bg-zinc-800 disabled:opacity-50 dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-white cursor-pointer"
             >
-              <Plus className="h-3.5 w-3.5" />
-              <span>Create Gallery</span>
+              {loading ? (
+                <>
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  <span>Creating...</span>
+                </>
+              ) : (
+                <>
+                  <Plus className="h-3.5 w-3.5" />
+                  <span>Create Gallery</span>
+                </>
+              )}
             </button>
           </div>
         </form>

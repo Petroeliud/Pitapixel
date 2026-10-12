@@ -2,7 +2,18 @@ import express from 'express';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import dotenv from 'dotenv';
+import crypto from 'crypto';
 import { GoogleGenAI, Type } from '@google/genai';
+import {
+  saveGalleryMeta,
+  getGalleryMeta,
+  getGalleryPhotos,
+  generateUploadSignature,
+  listAllGalleries,
+  deletePhotoByPublicId,
+  deleteGalleryAndContents,
+  GalleryMeta,
+} from './server/cloudinary.js';
 
 dotenv.config();
 
@@ -11,10 +22,218 @@ const __dirname = path.dirname(__filename);
 
 const app = express();
 const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'julian2026';
 
 app.use(express.json({ limit: '25mb' }));
 
-// Initialize GoogleGenAI SDK with server-side API key
+/**
+ * Middleware to verify admin password header
+ */
+function requireAdmin(req: express.Request, res: express.Response, next: express.NextFunction) {
+  const provided = req.headers['x-admin-password'];
+  if (provided === ADMIN_PASSWORD) {
+    return next();
+  }
+  res.status(401).json({ error: 'Unauthorized: Invalid admin password' });
+}
+
+/**
+ * Admin Login Endpoint
+ */
+app.post('/api/admin/login', (req, res) => {
+  const { password } = req.body;
+  if (password === ADMIN_PASSWORD) {
+    res.json({ success: true, message: 'Authenticated successfully' });
+  } else {
+    res.status(401).json({ success: false, error: 'Incorrect photographer password' });
+  }
+});
+
+/**
+ * POST /api/galleries - Create a new gallery (admin)
+ */
+app.post('/api/galleries', requireAdmin, async (req, res) => {
+  try {
+    const { title, clientName, shootDate, customSlug } = req.body;
+
+    if (!title || typeof title !== 'string') {
+      res.status(400).json({ error: 'Title is required' });
+      return;
+    }
+
+    // Generate unguessable random ID (12 characters) or clean custom slug
+    const randomHex = crypto.randomBytes(6).toString('hex');
+    let galleryId = randomHex;
+
+    if (customSlug && typeof customSlug === 'string') {
+      const cleaned = customSlug
+        .toLowerCase()
+        .replace(/[^a-z0-9_-]/g, '')
+        .trim();
+      if (cleaned) {
+        galleryId = `${cleaned}-${randomHex.substring(0, 4)}`;
+      }
+    }
+
+    const now = new Date().toISOString();
+    const meta: GalleryMeta = {
+      id: galleryId,
+      shareId: galleryId,
+      photographerId: 'admin',
+      title: title.trim(),
+      clientName: (clientName || '').trim(),
+      shootDate: shootDate || now.split('T')[0],
+      settings: {
+        allowDownload: true,
+        allowFavorites: true,
+        sizes: ['web', 'original'],
+      },
+      collections: [],
+      favorites: [],
+      activity: [],
+      viewCount: 0,
+      downloadCount: 0,
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    await saveGalleryMeta(galleryId, meta);
+
+    const shareUrl = `/g/${galleryId}`;
+    res.json({ gallery: meta, shareUrl, shareId: galleryId });
+  } catch (error: any) {
+    console.error('Error creating gallery:', error);
+    res.status(500).json({ error: error.message || 'Failed to create gallery' });
+  }
+});
+
+/**
+ * GET /api/galleries - List all galleries (admin)
+ */
+app.get('/api/galleries', requireAdmin, async (_req, res) => {
+  try {
+    const galleries = await listAllGalleries();
+    res.json({ galleries });
+  } catch (error: any) {
+    console.error('Error listing galleries:', error);
+    res.status(500).json({ error: 'Failed to fetch galleries' });
+  }
+});
+
+/**
+ * GET /api/galleries/:id - Get gallery details + photos (public)
+ */
+app.get('/api/galleries/:id', async (req, res) => {
+  try {
+    const galleryId = req.params.id;
+    if (!galleryId) {
+      res.status(400).json({ error: 'Gallery ID is required' });
+      return;
+    }
+
+    // 1. Fetch meta.json
+    const meta = await getGalleryMeta(galleryId);
+    if (!meta) {
+      res.status(404).json({ error: 'Gallery not found' });
+      return;
+    }
+
+    // 2. Fetch photos from Cloudinary
+    const photos = await getGalleryPhotos(galleryId);
+
+    // Increment view count asynchronously in meta
+    meta.viewCount = (meta.viewCount || 0) + 1;
+    saveGalleryMeta(galleryId, meta).catch((err) =>
+      console.error('Failed to update view count:', err)
+    );
+
+    res.json({ gallery: meta, photos });
+  } catch (error: any) {
+    console.error(`Error fetching gallery ${req.params.id}:`, error);
+    res.status(500).json({ error: 'Failed to load gallery' });
+  }
+});
+
+/**
+ * POST /api/galleries/:id/upload-signature - Generate signature for direct upload (admin)
+ */
+app.post('/api/galleries/:id/upload-signature', requireAdmin, async (req, res) => {
+  try {
+    const galleryId = req.params.id;
+    const signatureData = generateUploadSignature(galleryId);
+    res.json(signatureData);
+  } catch (error: any) {
+    console.error('Error generating upload signature:', error);
+    res.status(500).json({ error: 'Failed to generate upload signature' });
+  }
+});
+
+/**
+ * PATCH /api/galleries/:id - Update gallery metadata (admin)
+ */
+app.patch('/api/galleries/:id', requireAdmin, async (req, res) => {
+  try {
+    const galleryId = req.params.id;
+    const patch = req.body;
+
+    const currentMeta = await getGalleryMeta(galleryId);
+    if (!currentMeta) {
+      res.status(404).json({ error: 'Gallery not found' });
+      return;
+    }
+
+    const updatedMeta: GalleryMeta = {
+      ...currentMeta,
+      ...patch,
+      updatedAt: new Date().toISOString(),
+    };
+
+    await saveGalleryMeta(galleryId, updatedMeta);
+    res.json({ gallery: updatedMeta });
+  } catch (error: any) {
+    console.error(`Error updating gallery ${req.params.id}:`, error);
+    res.status(500).json({ error: 'Failed to update gallery' });
+  }
+});
+
+/**
+ * POST /api/galleries/:id/delete-photo - Delete a photo by public_id (admin)
+ */
+app.post('/api/galleries/:id/delete-photo', requireAdmin, async (req, res) => {
+  try {
+    const { publicId } = req.body;
+    if (!publicId || typeof publicId !== 'string') {
+      res.status(400).json({ error: 'publicId is required' });
+      return;
+    }
+
+    const success = await deletePhotoByPublicId(publicId);
+    if (success) {
+      res.json({ success: true });
+    } else {
+      res.status(500).json({ error: 'Failed to delete photo from Cloudinary' });
+    }
+  } catch (error: any) {
+    console.error('Error deleting photo:', error);
+    res.status(500).json({ error: 'Failed to delete photo' });
+  }
+});
+
+/**
+ * DELETE /api/galleries/:id - Delete a gallery and all contents (admin)
+ */
+app.delete('/api/galleries/:id', requireAdmin, async (req, res) => {
+  try {
+    const galleryId = req.params.id;
+    const success = await deleteGalleryAndContents(galleryId);
+    res.json({ success });
+  } catch (error: any) {
+    console.error(`Error deleting gallery ${req.params.id}:`, error);
+    res.status(500).json({ error: 'Failed to delete gallery' });
+  }
+});
+
+// Initialize GoogleGenAI SDK with server-side API key for Smart Framing
 const ai = new GoogleGenAI({
   apiKey: process.env.GEMINI_API_KEY || '',
   httpOptions: {
@@ -26,8 +245,6 @@ const ai = new GoogleGenAI({
 
 /**
  * AI Smart Framing endpoint
- * Detects the subject and head/face position in the photo so that
- * the cover photo hero keeps the subject's head comfortably in-frame.
  */
 app.post('/api/ai/smart-frame', async (req, res) => {
   try {
@@ -39,7 +256,6 @@ app.post('/api/ai/smart-frame', async (req, res) => {
     }
 
     if (!process.env.GEMINI_API_KEY) {
-      // Return smart fallback heuristics if key is not configured in environment
       res.json({
         focalX: 50,
         focalY: 28,
@@ -50,7 +266,6 @@ app.post('/api/ai/smart-frame', async (req, res) => {
       return;
     }
 
-    // Extract base64 payload & mimeType
     let mimeType = 'image/jpeg';
     let base64Data = imageData;
 
@@ -89,26 +304,11 @@ Return the optimal focal point percentages from 0 to 100:
         responseSchema: {
           type: Type.OBJECT,
           properties: {
-            focalX: {
-              type: Type.NUMBER,
-              description: 'Horizontal focal coordinate percentage from 0 to 100',
-            },
-            focalY: {
-              type: Type.NUMBER,
-              description: 'Vertical focal coordinate percentage from 0 to 100 centered on subject head/eyes',
-            },
-            hasSubject: {
-              type: Type.BOOLEAN,
-              description: 'Whether a clear human subject or focal element was detected',
-            },
-            subjectDescription: {
-              type: Type.STRING,
-              description: 'Brief description of the subject',
-            },
-            framingSummary: {
-              type: Type.STRING,
-              description: 'Explanation of how the framing ensures the head remains in view',
-            },
+            focalX: { type: Type.NUMBER },
+            focalY: { type: Type.NUMBER },
+            hasSubject: { type: Type.BOOLEAN },
+            subjectDescription: { type: Type.STRING },
+            framingSummary: { type: Type.STRING },
           },
           required: ['focalX', 'focalY', 'hasSubject', 'framingSummary'],
         },
@@ -118,7 +318,6 @@ Return the optimal focal point percentages from 0 to 100:
     const resultText = response.text?.trim() || '{}';
     const parsed = JSON.parse(resultText);
 
-    // Clamp coordinates safely
     const focalX = Math.max(5, Math.min(95, Math.round(parsed.focalX ?? 50)));
     const focalY = Math.max(5, Math.min(95, Math.round(parsed.focalY ?? 28)));
 
@@ -131,13 +330,12 @@ Return the optimal focal point percentages from 0 to 100:
     });
   } catch (error: any) {
     console.error('Error in /api/ai/smart-frame:', error);
-    // Graceful fallback to upper-third framing (standard photography rule for heads/faces)
     res.json({
       focalX: 50,
       focalY: 28,
       hasSubject: true,
       subjectDescription: 'Subject in scene',
-      framingSummary: 'Default upper-third framing applied to keep head in frame',
+      framingSummary: 'Default upper-third framing applied',
     });
   }
 });

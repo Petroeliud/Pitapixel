@@ -1,9 +1,7 @@
 import React, { useState, useRef } from 'react';
 import { Upload, CheckCircle2, Loader2, AlertCircle, RefreshCw, X } from 'lucide-react';
 import { Photo } from '../../types';
-import { processUploadedPhoto } from '../../utils/imageProcessing';
-import { storageProvider, UploadProgress } from '../../storage/storageProvider';
-import { savePhotosBatch } from '../../storage/db';
+import { getUploadSignatureApi, uploadPhotoToCloudinary } from '../../lib/api';
 
 interface BatchUploaderProps {
   galleryId: string;
@@ -16,7 +14,7 @@ interface UploadTaskItem {
   id: string;
   file: File;
   fileName: string;
-  status: 'pending' | 'processing' | 'uploading' | 'completed' | 'error';
+  status: 'pending' | 'uploading' | 'completed' | 'error';
   stageText: string;
   progressPercent: number;
   error?: string;
@@ -24,8 +22,6 @@ interface UploadTaskItem {
 
 export const BatchUploader: React.FC<BatchUploaderProps> = ({
   galleryId,
-  collectionId,
-  currentPhotoCount,
   onUploadComplete,
 }) => {
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -34,7 +30,7 @@ export const BatchUploader: React.FC<BatchUploaderProps> = ({
   const [tasks, setTasks] = useState<UploadTaskItem[]>([]);
   const [overallProgress, setOverallProgress] = useState(0);
 
-  const startUploadProcess = async (fileList: File[]) => {
+  const uploadBatch = async (fileList: File[]) => {
     if (!fileList.length) return;
 
     const initialTasks: UploadTaskItem[] = fileList.map((file, idx) => ({
@@ -49,131 +45,91 @@ export const BatchUploader: React.FC<BatchUploaderProps> = ({
     setTasks(initialTasks);
     setIsUploading(true);
 
-    const successfullyCreatedPhotos: Photo[] = [];
+    try {
+      // Fetch signed upload parameters from server
+      const signatureData = await getUploadSignatureApi(galleryId);
 
-    for (let i = 0; i < initialTasks.length; i++) {
-      const task = initialTasks[i];
+      let completedCount = 0;
+      const CONCURRENCY = 3; // Upload 3 files at a time
+      let activeIndex = 0;
 
-      // Update task status: processing
-      setTasks((prev) =>
-        prev.map((t) =>
-          t.id === task.id
-            ? { ...t, status: 'processing', stageText: 'Resizing thumbnails in browser...' }
-            : t
-        )
-      );
-
-      try {
-        const photoId = `photo-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
-        
-        // 1. Generate thumbnail & web size in the browser
-        const processed = await processUploadedPhoto(task.file, (stage) => {
-          setTasks((prev) =>
-            prev.map((t) => (t.id === task.id ? { ...t, stageText: stage } : t))
-          );
-        });
-
-        // Update task status: uploading to storage
+      const processTask = async (task: UploadTaskItem) => {
         setTasks((prev) =>
           prev.map((t) =>
             t.id === task.id
-              ? { ...t, status: 'uploading', stageText: 'Uploading to Firebase Storage...' }
+              ? { ...t, status: 'uploading', stageText: 'Uploading to Cloudinary...', progressPercent: 0 }
               : t
           )
         );
 
-        // 2. Upload thumb, web, and original to Firebase Storage
-        let finalUrls = processed.urls;
         try {
-          const uploadResult = await storageProvider.uploadPhoto(
-            galleryId,
-            photoId,
-            {
-              thumbBlob: processed.blobs.thumb,
-              webBlob: processed.blobs.web,
-              originalBlob: processed.blobs.original,
-            },
-            (progress: UploadProgress) => {
-              setTasks((prev) =>
-                prev.map((t) =>
-                  t.id === task.id
-                    ? {
-                        ...t,
-                        progressPercent: progress.progressPercent,
-                        stageText: `Uploading ${progress.stage} (${progress.progressPercent}%)`,
-                      }
-                    : t
-                )
-              );
-            }
+          await uploadPhotoToCloudinary(task.file, signatureData, (pct) => {
+            setTasks((prev) =>
+              prev.map((t) =>
+                t.id === task.id
+                  ? {
+                      ...t,
+                      progressPercent: pct,
+                      stageText: `Uploading (${pct}%)`,
+                    }
+                  : t
+              )
+            );
+          });
+
+          completedCount++;
+          setTasks((prev) =>
+            prev.map((t) =>
+              t.id === task.id
+                ? { ...t, status: 'completed', stageText: 'Saved to Cloudinary', progressPercent: 100 }
+                : t
+            )
           );
-
-          finalUrls = {
-            thumb: uploadResult.thumbUrl,
-            web: uploadResult.webUrl,
-            original: uploadResult.originalUrl,
-          };
-        } catch (storageErr) {
-          console.warn('Storage upload encountered issue, falling back to optimized inline URLs:', storageErr);
-          // If storage bucket is not configured yet or has CORS restrictions,
-          // the processed optimized URLs are used to guarantee photo delivery
+        } catch (err: any) {
+          console.error(`Error uploading ${task.fileName}:`, err);
+          setTasks((prev) =>
+            prev.map((t) =>
+              t.id === task.id
+                ? {
+                    ...t,
+                    status: 'error',
+                    stageText: 'Upload failed',
+                    error: err.message || 'Error uploading file',
+                  }
+                : t
+            )
+          );
+        } finally {
+          const totalPct = Math.round((completedCount / initialTasks.length) * 100);
+          setOverallProgress(totalPct);
         }
+      };
 
-        const photo: Photo = {
-          id: photoId,
-          galleryId,
-          collectionId,
-          fileName: processed.fileName,
-          urls: finalUrls,
-          width: processed.width,
-          height: processed.height,
-          aspectRatio: processed.aspectRatio,
-          order: currentPhotoCount + successfullyCreatedPhotos.length,
-          createdAt: new Date().toISOString(),
-        };
+      // Run concurrency pool of 3 parallel uploads
+      const workers = Array.from({ length: Math.min(CONCURRENCY, initialTasks.length) }, async () => {
+        while (activeIndex < initialTasks.length) {
+          const taskToRun = initialTasks[activeIndex];
+          activeIndex++;
+          await processTask(taskToRun);
+        }
+      });
 
-        // Save immediately to Firestore
-        await savePhotosBatch([photo]);
-        successfullyCreatedPhotos.push(photo);
+      await Promise.all(workers);
 
-        setTasks((prev) =>
-          prev.map((t) =>
-            t.id === task.id
-              ? { ...t, status: 'completed', stageText: 'Saved to cloud', progressPercent: 100 }
-              : t
-          )
-        );
-      } catch (err: any) {
-        console.error(`Error uploading photo ${task.fileName}:`, err);
-        setTasks((prev) =>
-          prev.map((t) =>
-            t.id === task.id
-              ? {
-                  ...t,
-                  status: 'error',
-                  stageText: 'Upload failed',
-                  error: err.message || 'Error uploading file',
-                }
-              : t
-          )
-        );
-      }
-
-      setOverallProgress(Math.round(((i + 1) / initialTasks.length) * 100));
+      // Re-fetch gallery from server so Cloudinary list is source of truth
+      onUploadComplete([]);
+    } catch (err: any) {
+      console.error('Failed to initialize upload signature:', err);
+    } finally {
+      setIsUploading(false);
+      if (fileInputRef.current) fileInputRef.current.value = '';
     }
-
-    if (successfullyCreatedPhotos.length > 0) {
-      onUploadComplete(successfullyCreatedPhotos);
-    }
-
-    setIsUploading(false);
-    if (fileInputRef.current) fileInputRef.current.value = '';
   };
 
   const retryFailedTask = async (taskId: string) => {
     const task = tasks.find((t) => t.id === taskId);
     if (!task) return;
-    await startUploadProcess([task.file]);
+    await uploadBatch([task.file]);
   };
 
   const handleFiles = (files: FileList | File[]) => {
@@ -181,7 +137,7 @@ export const BatchUploader: React.FC<BatchUploaderProps> = ({
       f.type.startsWith('image/')
     );
     if (!fileArray.length) return;
-    startUploadProcess(fileArray);
+    uploadBatch(fileArray);
   };
 
   const handleDragOver = (e: React.DragEvent) => {
@@ -238,7 +194,7 @@ export const BatchUploader: React.FC<BatchUploaderProps> = ({
           Drag and drop photos here, or click to browse
         </h3>
         <p className="mt-1 text-[11px] text-zinc-500 dark:text-zinc-400">
-          Generates thumbnails and web sizes in-browser, uploads to Firebase Storage, and saves records in Firestore.
+          Direct signed upload to Cloudinary (3 at a time concurrency)
         </p>
       </div>
 
@@ -304,7 +260,7 @@ export const BatchUploader: React.FC<BatchUploaderProps> = ({
                 </div>
 
                 <div className="flex items-center gap-2 shrink-0">
-                  {task.status === 'processing' || task.status === 'uploading' ? (
+                  {task.status === 'uploading' ? (
                     <div className="flex items-center gap-1.5 font-mono text-[11px] text-zinc-500">
                       <Loader2 className="h-3 w-3 animate-spin" />
                       <span>{task.progressPercent}%</span>

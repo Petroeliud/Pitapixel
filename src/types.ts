@@ -33,6 +33,7 @@ export interface PhotoExif {
 
 export interface Photo {
   id: string;
+  publicId?: string;
   galleryId: string;
   collectionId?: string;
   fileName: string;
@@ -70,6 +71,8 @@ export interface Gallery {
   expiresAt?: string;
   settings: GallerySettings;
   collections: Collection[];
+  favorites?: string[];
+  activity?: ActivityEvent[];
   viewCount: number;
   downloadCount: number;
   createdAt: string;
