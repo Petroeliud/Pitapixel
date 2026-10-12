@@ -80,7 +80,7 @@ Return the optimal focal point percentages from 0 to 100:
 - framingSummary: brief rationale for the selected coordinates.`;
 
     const response = await ai.models.generateContent({
-      model: 'gemini-2.5-flash',
+      model: 'gemini-3.8-flash',
       contents: {
         parts: [imagePart, { text: prompt }],
       },

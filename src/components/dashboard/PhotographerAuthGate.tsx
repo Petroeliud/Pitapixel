@@ -15,53 +15,30 @@ export const PhotographerAuthGate: React.FC<PhotographerAuthGateProps> = ({
   children,
   onReturnToGallery,
 }) => {
-  const { user, signOut, signInWithGoogle, signInAsClient } = useAuth();
+  const { user, signOut } = useAuth();
   const [googleModalOpen, setGoogleModalOpen] = useState(false);
-  const [overrideAuthorized, setOverrideAuthorized] = useState(false);
-  const [pinInput, setPinInput] = useState('');
-  const [pinError, setPinError] = useState(false);
-  const [showPinInput, setShowPinInput] = useState(false);
 
-  // The designated admin user ID and authorized photographer email
+  // The designated admin user ID and authorized photographer emails
   const ADMIN_UID = '0OExGqOkojNlshcGghVEpNzeNWj2';
-  const authorizedEmail = (photographer.email || 'julian@pitapixel.com').toLowerCase();
+  const AUTHORIZED_EMAILS = [
+    'petroeliud04@gmail.com',
+    (photographer.email || '').toLowerCase().trim(),
+  ].filter(Boolean);
 
-  // Check if current user is authorized as the photographer or admin
-  const isAuthorizedPhotographer =
-    overrideAuthorized ||
-    (user && (
+  // Check if current user is authorized as the designated admin or photographer
+  const isAuthorizedPhotographer = Boolean(
+    user && (
       user.uid === ADMIN_UID ||
-      user.email?.toLowerCase() === authorizedEmail ||
-      user.email?.toLowerCase().includes('pitapixel.com') ||
-      user.email?.toLowerCase() === 'photographer@pitapixel.com'
-    ));
+      (user.email && AUTHORIZED_EMAILS.includes(user.email.toLowerCase().trim()))
+    )
+  );
 
   // If authorized, render dashboard
   if (isAuthorizedPhotographer) {
     return <>{children}</>;
   }
 
-  // Master PIN verification for testing / owner claims
-  const handlePinSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (pinInput.trim() === 'pitapixel' || pinInput.trim() === '1234') {
-      setOverrideAuthorized(true);
-      setPinError(false);
-    } else {
-      setPinError(true);
-    }
-  };
-
-  // Quick sign in as the studio photographer
-  const handleSignInAsStudioPhotographer = async () => {
-    try {
-      await signInAsClient(photographer.email, photographer.name);
-    } catch (err) {
-      console.error(err);
-    }
-  };
-
-  // State A: User is logged in, but their account is NOT the photographer's account
+  // State A: User is logged in, but their account is NOT the authorized photographer/admin account
   if (user && !isAuthorizedPhotographer) {
     return (
       <div className="flex min-h-[90vh] flex-col items-center justify-center p-4">
@@ -77,18 +54,23 @@ export const PhotographerAuthGate: React.FC<PhotographerAuthGateProps> = ({
           <p className="mt-2 text-xs text-zinc-600 dark:text-zinc-400 leading-relaxed">
             The signed-in account{' '}
             <strong className="text-zinc-900 dark:text-white font-semibold">
-              {user.email || user.displayName}
+              {user.email || user.displayName || user.uid}
             </strong>{' '}
             is not authorized to manage this dashboard.
           </p>
 
           <div className="mt-4 rounded-md border border-zinc-200 bg-zinc-50 p-3 text-left text-xs dark:border-zinc-800 dark:bg-zinc-800/40">
             <span className="text-[11px] font-medium text-zinc-500 uppercase tracking-wider block mb-1">
-              Authorized Photographer Account:
+              Authorized Accounts:
             </span>
-            <span className="font-mono text-xs font-semibold text-zinc-900 dark:text-zinc-100">
-              {photographer.email}
+            <span className="font-mono text-xs font-semibold text-zinc-900 dark:text-zinc-100 block">
+              petroeliud04@gmail.com
             </span>
+            {photographer.email && photographer.email !== 'petroeliud04@gmail.com' && (
+              <span className="font-mono text-xs text-zinc-600 dark:text-zinc-400 block mt-0.5">
+                {photographer.email}
+              </span>
+            )}
           </div>
 
           <div className="mt-6 flex flex-col gap-2.5">
@@ -100,19 +82,12 @@ export const PhotographerAuthGate: React.FC<PhotographerAuthGateProps> = ({
               className="flex w-full items-center justify-center gap-2 rounded-md bg-zinc-900 py-2.5 text-xs font-medium text-white transition-colors hover:bg-zinc-800 dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-white cursor-pointer"
             >
               <LogOut className="h-3.5 w-3.5" />
-              <span>Switch to Photographer Account</span>
-            </button>
-
-            <button
-              onClick={handleSignInAsStudioPhotographer}
-              className="flex w-full items-center justify-center gap-2 rounded-md border border-zinc-200 bg-white py-2 text-xs font-medium text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-200 cursor-pointer"
-            >
-              <span>Login as {photographer.name} ({photographer.email})</span>
+              <span>Sign In with Authorized Account</span>
             </button>
 
             <button
               onClick={onReturnToGallery}
-              className="mt-1 text-xs text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-white transition-colors cursor-pointer"
+              className="mt-2 text-xs text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-white transition-colors cursor-pointer"
             >
               ← Return to Client Gallery
             </button>
@@ -128,7 +103,7 @@ export const PhotographerAuthGate: React.FC<PhotographerAuthGateProps> = ({
     );
   }
 
-  // State B: User is not logged in at all
+  // State B: User is not logged in at all — Only authorized Google account can sign in
   return (
     <div className="flex min-h-[90vh] flex-col items-center justify-center p-4">
       <div className="w-full max-w-md rounded-lg border border-zinc-200 bg-white p-8 text-center shadow-lg dark:border-zinc-800 dark:bg-zinc-900">
@@ -141,7 +116,7 @@ export const PhotographerAuthGate: React.FC<PhotographerAuthGateProps> = ({
         </h2>
 
         <p className="mt-2 text-xs text-zinc-500 dark:text-zinc-400 leading-relaxed">
-          Sign in with the photographer account (<strong className="font-semibold text-zinc-700 dark:text-zinc-300">{photographer.email}</strong>) to access studio galleries, upload photos, and manage delivery settings.
+          This dashboard is strictly private. Only the authorized photographer can sign in to manage galleries and deliveries.
         </p>
 
         <div className="mt-6 space-y-3">
@@ -169,44 +144,6 @@ export const PhotographerAuthGate: React.FC<PhotographerAuthGateProps> = ({
             </svg>
             <span>Sign in with Google</span>
           </button>
-
-          <button
-            onClick={handleSignInAsStudioPhotographer}
-            className="flex w-full items-center justify-center gap-1.5 rounded-md border border-zinc-200 bg-zinc-50 py-2 text-xs font-medium text-zinc-700 hover:bg-zinc-100 dark:border-zinc-800 dark:bg-zinc-800/80 dark:text-zinc-200 cursor-pointer"
-          >
-            <span>Login as Photographer ({photographer.name})</span>
-            <ArrowRight className="h-3.5 w-3.5" />
-          </button>
-
-          {!showPinInput ? (
-            <button
-              onClick={() => setShowPinInput(true)}
-              className="text-[11px] text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-300 transition-colors"
-            >
-              Enter Studio Master PIN
-            </button>
-          ) : (
-            <form onSubmit={handlePinSubmit} className="pt-2 border-t border-zinc-100 dark:border-zinc-800">
-              <div className="flex gap-2">
-                <input
-                  type="password"
-                  value={pinInput}
-                  onChange={(e) => setPinInput(e.target.value)}
-                  placeholder="Master PIN (pitapixel)"
-                  className="flex-1 rounded-md border border-zinc-200 bg-white px-2.5 py-1.5 text-xs text-zinc-900 dark:border-zinc-700 dark:bg-zinc-800 dark:text-white"
-                />
-                <button
-                  type="submit"
-                  className="rounded-md bg-zinc-900 px-3 py-1.5 text-xs font-medium text-white dark:bg-zinc-100 dark:text-zinc-900"
-                >
-                  Unlock
-                </button>
-              </div>
-              {pinError && (
-                <p className="mt-1 text-[11px] text-rose-500">Incorrect PIN. Try "pitapixel"</p>
-              )}
-            </form>
-          )}
 
           <div className="pt-3">
             <button

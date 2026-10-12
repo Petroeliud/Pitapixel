@@ -18,6 +18,7 @@ import {
 import {
   ensureSeedData,
   getGalleryByShareId,
+  getAllGalleries,
   getPhotosByGallery,
   getPhotographer,
   SEED_SHARE_ID,
@@ -32,33 +33,56 @@ function FrameApp() {
   const [loading, setLoading] = useState(true);
   const [shareModalOpen, setShareModalOpen] = useState(false);
 
-  // Parse share ID from URL hash if present (e.g. #gallery/{shareId} or #dashboard)
+  // Parse share ID from URL path (deterministic /g/{id}) or hash fallback
   const parseUrlShareId = useCallback(() => {
-    const hash = window.location.hash;
-    if (hash === '#dashboard' || hash === '#admin') {
-      setCurrentView('dashboard');
-    } else if (hash.startsWith('#gallery/')) {
-      const rest = hash.replace('#gallery/', '').trim();
-      const queryPart = rest.includes('?') ? rest.split('?')[1] : '';
-      const urlParams = new URLSearchParams(queryPart);
-      const queryId = urlParams.get('id');
-      const cleanPath = rest.split('?')[0].replace(/\/$/, '');
-      const targetId = queryId || cleanPath;
+    const pathname = window.location.pathname || '';
+    const hash = window.location.hash || '';
+    const search = window.location.search || '';
 
-      if (targetId) {
-        setActiveShareId(decodeURIComponent(targetId));
+    if (hash === '#dashboard' || hash === '#admin' || pathname.startsWith('/dashboard') || pathname.startsWith('/admin')) {
+      setCurrentView('dashboard');
+      return;
+    }
+
+    const urlParams = new URLSearchParams(search);
+    const queryG = urlParams.get('g') || urlParams.get('share') || urlParams.get('id');
+
+    let targetId = '';
+    // 1. Direct canonical pathname /g/{id}
+    if (pathname.startsWith('/g/')) {
+      targetId = pathname.replace('/g/', '');
+    } else if (pathname.includes('/g/')) {
+      targetId = pathname.split('/g/')[1];
+    } else if (queryG) {
+      targetId = queryG;
+    } else if (hash.startsWith('#g/')) {
+      targetId = hash.replace('#g/', '');
+    } else if (hash.startsWith('#/g/')) {
+      targetId = hash.replace('#/g/', '');
+    } else if (hash.startsWith('#gallery/')) {
+      targetId = hash.replace('#gallery/', '');
+    }
+
+    if (targetId) {
+      const cleanPath = targetId.split('?')[0].split('#')[0].replace(/\/$/, '').trim();
+      if (cleanPath) {
+        setActiveShareId(decodeURIComponent(cleanPath));
+        setCurrentView('client');
       }
-      setCurrentView('client');
     }
   }, []);
 
   useEffect(() => {
     parseUrlShareId();
     window.addEventListener('hashchange', parseUrlShareId);
-    return () => window.removeEventListener('hashchange', parseUrlShareId);
+    window.addEventListener('popstate', parseUrlShareId);
+    return () => {
+      window.removeEventListener('hashchange', parseUrlShareId);
+      window.removeEventListener('popstate', parseUrlShareId);
+    };
   }, [parseUrlShareId]);
 
-  // Load active gallery & photos from IndexedDB
+  // Load active gallery & photos from Firestore / IndexedDB
   const loadGalleryData = useCallback(async () => {
     try {
       setLoading(true);
@@ -74,12 +98,28 @@ function FrameApp() {
         const photoList = await getPhotosByGallery(gal.id);
         setPhotos(photoList);
       } else {
-        // Fallback to seed share ID if shareId was invalid
-        const seedGal = await getGalleryByShareId(SEED_SHARE_ID);
-        if (seedGal) {
-          setGallery(seedGal);
-          const photoList = await getPhotosByGallery(seedGal.id);
-          setPhotos(photoList);
+        const hasExplicitShareInUrl =
+          window.location.pathname.startsWith('/g/') ||
+          window.location.hash.startsWith('#g/') ||
+          window.location.hash.startsWith('#gallery/') ||
+          window.location.search.includes('g=');
+
+        if (!hasExplicitShareInUrl) {
+          // Default landing: pick first available non-deleted gallery
+          const allGals = await getAllGalleries();
+          if (allGals.length > 0) {
+            setGallery(allGals[0]);
+            setActiveShareId(allGals[0].shareId);
+            const photoList = await getPhotosByGallery(allGals[0].id);
+            setPhotos(photoList);
+          } else {
+            setGallery(null);
+            setPhotos([]);
+          }
+        } else {
+          // Explicitly requested link was not found
+          setGallery(null);
+          setPhotos([]);
         }
       }
 
@@ -125,13 +165,19 @@ function FrameApp() {
 
   const handleViewClientGallery = (shareId: string) => {
     setActiveShareId(shareId);
-    window.location.hash = `#gallery/${shareId}`;
+    // Push deterministic /g/{id} URL into window history and address bar
+    const newPath = `/g/${shareId}`;
+    if (window.location.pathname !== newPath) {
+      window.history.pushState({ shareId }, '', newPath);
+    }
     setCurrentView('client');
   };
 
   const handleNavigateToDashboard = () => {
     setCurrentView('dashboard');
-    window.location.hash = '#dashboard';
+    if (window.location.pathname !== '/dashboard') {
+      window.history.pushState({}, '', '/dashboard');
+    }
   };
 
   return (
@@ -146,7 +192,7 @@ function FrameApp() {
           currentView={currentView}
           onNavigate={(view) => {
             setCurrentView(view);
-            window.location.hash = view === 'dashboard' ? '#dashboard' : `#gallery/${activeShareId}`;
+            window.location.hash = view === 'dashboard' ? '#dashboard' : `#g/${activeShareId}`;
           }}
           galleryTitle={gallery?.title}
           brandName={photographer?.brandName || photographer?.name}
@@ -171,12 +217,43 @@ function FrameApp() {
           onRefreshGallery={loadGalleryData}
           onNavigateToDashboard={handleNavigateToDashboard}
         />
+      ) : currentView === 'client' && !gallery ? (
+        /* Calm Not Found State if an album link does not exist */
+        <div className="flex min-h-[100svh] flex-col items-center justify-center px-4 text-center bg-zinc-950 text-white">
+          <div className="max-w-md space-y-4">
+            <h1 className="text-xl font-medium tracking-tight">
+              Gallery Not Found
+            </h1>
+            <p className="text-xs text-zinc-400 leading-relaxed">
+              The gallery link you followed is not available or has been deleted.
+            </p>
+            <div className="pt-4 flex items-center justify-center gap-3">
+              <button
+                onClick={handleNavigateToDashboard}
+                className="rounded-md border border-white/20 bg-white/10 px-4 py-2 text-xs font-medium text-white transition-colors hover:bg-white/20 cursor-pointer"
+              >
+                Photographer Portal
+              </button>
+              <button
+                onClick={async () => {
+                  const all = await getAllGalleries();
+                  if (all.length > 0) {
+                    handleViewClientGallery(all[0].shareId);
+                  }
+                }}
+                className="rounded-md bg-white px-4 py-2 text-xs font-medium text-zinc-900 transition-colors hover:bg-zinc-200 cursor-pointer"
+              >
+                View Available Galleries
+              </button>
+            </div>
+          </div>
+        </div>
       ) : photographer ? (
         <PhotographerAuthGate
           photographer={photographer}
           onReturnToGallery={() => {
             setCurrentView('client');
-            window.location.hash = `#gallery/${activeShareId}`;
+            window.location.hash = `#g/${activeShareId}`;
           }}
         >
           <PhotographerDashboard

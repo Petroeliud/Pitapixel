@@ -239,6 +239,20 @@ export const PhotographerDashboard: React.FC<PhotographerDashboardProps> = ({
                             <span>Client view</span>
                             <ExternalLink className="h-3 w-3" />
                           </button>
+                          <span className="text-zinc-300 dark:text-zinc-700">·</span>
+                          <button
+                            onClick={async (e) => {
+                              e.stopPropagation();
+                              if (window.confirm(`Delete "${gallery.title}"? This cannot be undone.`)) {
+                                await deleteGallery(gallery.id);
+                                refreshGalleries();
+                              }
+                            }}
+                            title="Delete this gallery"
+                            className="text-xs font-medium text-rose-500 hover:text-rose-700 transition-colors"
+                          >
+                            Delete
+                          </button>
                         </div>
                       </div>
                     </div>

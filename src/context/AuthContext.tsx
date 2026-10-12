@@ -4,6 +4,8 @@ import {
   auth,
   loginWithGoogle,
   loginWithClientDetails,
+  loginWithEmailPassword,
+  registerPhotographerWithEmailPassword,
   logoutUser,
   AppUserProfile,
 } from '../storage/firebase';
@@ -16,6 +18,8 @@ interface AuthContextType {
   loading: boolean;
   authError: string | null;
   signInWithGoogle: () => Promise<void>;
+  signInWithEmail: (email: string, pass: string) => Promise<void>;
+  registerWithEmail: (email: string, pass: string, brandName?: string) => Promise<void>;
   signInAsClient: (email: string, name: string) => Promise<void>;
   signOut: () => Promise<void>;
   clearAuthError: () => void;
@@ -27,6 +31,8 @@ const AuthContext = createContext<AuthContextType>({
   loading: true,
   authError: null,
   signInWithGoogle: async () => {},
+  signInWithEmail: async () => {},
+  registerWithEmail: async () => {},
   signInAsClient: async () => {},
   signOut: async () => {},
   clearAuthError: () => {},
@@ -106,6 +112,44 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
+  const handleEmailSignIn = async (email: string, pass: string) => {
+    try {
+      setAuthError(null);
+      const profile = await loginWithEmailPassword(email, pass);
+      setUser(profile);
+      try {
+        localStorage.setItem(CLIENT_SESSION_KEY, JSON.stringify(profile));
+      } catch {}
+    } catch (err: any) {
+      console.error('Email sign in error:', err);
+      const msg = err.code === 'auth/invalid-credential' || err.code === 'auth/wrong-password' || err.code === 'auth/user-not-found'
+        ? 'Invalid email or password.'
+        : err.message || 'Failed to sign in.';
+      setAuthError(msg);
+      throw new Error(msg);
+    }
+  };
+
+  const handleEmailRegister = async (email: string, pass: string, brandName?: string) => {
+    try {
+      setAuthError(null);
+      const profile = await registerPhotographerWithEmailPassword(email, pass, brandName);
+      setUser(profile);
+      try {
+        localStorage.setItem(CLIENT_SESSION_KEY, JSON.stringify(profile));
+      } catch {}
+    } catch (err: any) {
+      console.error('Registration error:', err);
+      const msg = err.code === 'auth/email-already-in-use'
+        ? 'This email address is already registered. Please sign in.'
+        : err.code === 'auth/weak-password'
+        ? 'Password must be at least 6 characters.'
+        : err.message || 'Registration failed.';
+      setAuthError(msg);
+      throw new Error(msg);
+    }
+  };
+
   const handleSignOut = async () => {
     try {
       await logoutUser();
@@ -128,6 +172,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         loading,
         authError,
         signInWithGoogle: handleSignIn,
+        signInWithEmail: handleEmailSignIn,
+        registerWithEmail: handleEmailRegister,
         signInAsClient: handleClientSignIn,
         signOut: handleSignOut,
         clearAuthError: () => setAuthError(null),

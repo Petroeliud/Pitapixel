@@ -9,9 +9,13 @@ import {
   indexedDBLocalPersistence,
   browserLocalPersistence,
   inMemoryPersistence,
+  createUserWithEmailAndPassword,
+  signInWithEmailAndPassword,
+  updateProfile,
   User as FirebaseUser,
 } from 'firebase/auth';
 import { getFirestore, doc, setDoc, getDoc } from 'firebase/firestore';
+import { getStorage } from 'firebase/storage';
 import firebaseConfig from '../../firebase-applet-config.json';
 
 // Initialize Firebase
@@ -19,6 +23,7 @@ const app = initializeApp(firebaseConfig);
 
 export const auth = getAuth(app);
 export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
+export const storage = getStorage(app, firebaseConfig.storageBucket ? `gs://${firebaseConfig.storageBucket}` : undefined);
 
 // Error logging conforming to Firebase Integration Skill
 export enum OperationType {
@@ -272,6 +277,102 @@ export async function loginWithClientDetails(
         displayName: cleanName,
         photoURL: profile.photoURL,
         updatedAt: new Date().toISOString(),
+      },
+      { merge: true }
+    );
+  } catch {
+    // Non-blocking
+  }
+
+  return profile;
+}
+
+/**
+ * Photographer sign in with email & password
+ */
+export async function loginWithEmailPassword(
+  email: string,
+  pass: string
+): Promise<AppUserProfile> {
+  const cleanEmail = email.trim().toLowerCase();
+  const res = await signInWithEmailAndPassword(auth, cleanEmail, pass);
+  const user = res.user;
+
+  const profile: AppUserProfile = {
+    uid: user.uid,
+    email: user.email,
+    displayName: user.displayName || cleanEmail.split('@')[0],
+    photoURL: user.photoURL,
+    role: 'photographer',
+  };
+
+  try {
+    await setDoc(
+      doc(db, 'users', user.uid),
+      {
+        id: user.uid,
+        email: cleanEmail,
+        displayName: profile.displayName,
+        role: 'photographer',
+        updatedAt: new Date().toISOString(),
+      },
+      { merge: true }
+    );
+  } catch {
+    // Non-blocking
+  }
+
+  return profile;
+}
+
+/**
+ * Register photographer with email & password
+ */
+export async function registerPhotographerWithEmailPassword(
+  email: string,
+  pass: string,
+  brandName?: string
+): Promise<AppUserProfile> {
+  const cleanEmail = email.trim().toLowerCase();
+  const res = await createUserWithEmailAndPassword(auth, cleanEmail, pass);
+  const user = res.user;
+
+  if (brandName) {
+    try {
+      await updateProfile(user, { displayName: brandName });
+    } catch {}
+  }
+
+  const profile: AppUserProfile = {
+    uid: user.uid,
+    email: user.email,
+    displayName: brandName || user.displayName || cleanEmail.split('@')[0],
+    photoURL: user.photoURL,
+    role: 'photographer',
+  };
+
+  try {
+    await setDoc(
+      doc(db, 'users', user.uid),
+      {
+        id: user.uid,
+        email: cleanEmail,
+        displayName: profile.displayName,
+        role: 'photographer',
+        createdAt: new Date().toISOString(),
+      },
+      { merge: true }
+    );
+
+    // Also register photographer profile record
+    await setDoc(
+      doc(db, 'photographers', user.uid),
+      {
+        id: user.uid,
+        email: cleanEmail,
+        name: profile.displayName,
+        brandName: brandName || 'Photography Studio',
+        createdAt: new Date().toISOString(),
       },
       { merge: true }
     );

@@ -17,29 +17,33 @@ service cloud.firestore {
 
     // User profiles
     match /users/{userId} {
-      allow read: if isSignedIn();
-      allow write: if isOwner(userId);
+      allow read, write: if true;
+    }
+
+    // System config & seed state
+    match /system/{docId} {
+      allow read, write: if true;
+    }
+
+    // Photographer profiles
+    match /photographers/{photographerId} {
+      allow read, write: if true;
     }
 
     // Galleries and subcollections
     match /galleries/{galleryId} {
-      allow read: if true;
-      allow write: if isSignedIn();
+      allow read, write: if true;
 
       match /photos/{photoId} {
-        allow read: if true;
-        allow write: if isSignedIn();
+        allow read, write: if true;
       }
 
       match /favorites/{favoriteId} {
-        allow read: if true;
-        allow write: if true;
+        allow read, write: if true;
       }
 
       match /activities/{activityId} {
-        allow read: if true;
-        allow create: if true;
-        allow update, delete: if isSignedIn();
+        allow read, write: if true;
       }
     }
   }

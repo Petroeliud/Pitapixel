@@ -73,10 +73,45 @@ export function resizeImageElement(
   return { dataUrl, width: targetWidth, height: targetHeight };
 }
 
+export function dataUrlToBlob(dataUrl: string): Blob {
+  const parts = dataUrl.split(',');
+  const mime = parts[0].match(/:(.*?);/)?.[1] || 'image/jpeg';
+  const byteString = atob(parts[1]);
+  const arrayBuffer = new ArrayBuffer(byteString.length);
+  const uint8Array = new Uint8Array(arrayBuffer);
+  for (let i = 0; i < byteString.length; i++) {
+    uint8Array[i] = byteString.charCodeAt(i);
+  }
+  return new Blob([uint8Array], { type: mime });
+}
+
+export function canvasToBlob(
+  canvas: HTMLCanvasElement,
+  format: 'image/jpeg' | 'image/webp' = 'image/jpeg',
+  quality: number = 0.85
+): Promise<Blob> {
+  return new Promise((resolve, reject) => {
+    canvas.toBlob(
+      (blob) => {
+        if (blob) resolve(blob);
+        else reject(new Error('Canvas toBlob conversion failed'));
+      },
+      format,
+      quality
+    );
+  });
+}
+
 export async function processUploadedPhoto(
   file: File,
   onProgress?: (stage: string) => void
-): Promise<ProcessedImageResult> {
+): Promise<ProcessedImageResult & {
+  blobs: {
+    thumb: Blob;
+    web: Blob;
+    original: Blob;
+  };
+}> {
   onProgress?.('Reading file...');
   const originalDataUrl = await fileToDataUrl(file);
 
@@ -86,18 +121,27 @@ export async function processUploadedPhoto(
   const origHeight = img.naturalHeight || img.height;
   const aspectRatio = Number((origWidth / (origHeight || 1)).toFixed(3));
 
-  onProgress?.('Generating web size...');
-  const webSize = resizeImageElement(img, 1600, 0.85, 'image/jpeg');
+  onProgress?.('Generating web size (1440px)...');
+  const webSize = resizeImageElement(img, 1440, 0.82, 'image/jpeg');
 
-  onProgress?.('Generating thumbnail...');
-  const thumbSize = resizeImageElement(img, 440, 0.8, 'image/jpeg');
+  onProgress?.('Generating thumbnail (420px)...');
+  const thumbSize = resizeImageElement(img, 420, 0.78, 'image/jpeg');
+
+  const thumbBlob = dataUrlToBlob(thumbSize.dataUrl);
+  const webBlob = dataUrlToBlob(webSize.dataUrl);
+  const originalBlob = file; // Preserve exact original binary file!
 
   return {
     fileName: file.name,
     urls: {
       thumb: thumbSize.dataUrl,
       web: webSize.dataUrl,
-      original: originalDataUrl,
+      original: originalDataUrl.length > 600000 ? webSize.dataUrl : originalDataUrl,
+    },
+    blobs: {
+      thumb: thumbBlob,
+      web: webBlob,
+      original: originalBlob,
     },
     width: origWidth,
     height: origHeight,

@@ -9,6 +9,26 @@
     <meta property="og:description" content="Minimal, fast photo delivery platform for photographers to share client galleries through private links." />
     <meta property="og:type" content="website" />
     <meta name="twitter:card" content="summary_large_image" />
+    <script>
+      // Suppress benign Vite HMR WebSocket closing notices in sandboxed iframe environment
+      window.addEventListener('unhandledrejection', function (event) {
+        if (
+          event.reason &&
+          typeof event.reason.message === 'string' &&
+          (event.reason.message.includes('WebSocket') || event.reason.message.includes('websocket'))
+        ) {
+          event.preventDefault();
+        }
+      });
+      window.addEventListener('error', function (event) {
+        if (
+          event.message &&
+          (event.message.includes('WebSocket') || event.message.includes('websocket') || event.message.includes('[vite] failed to connect'))
+        ) {
+          event.preventDefault();
+        }
+      });
+    </script>
     <script src="https://accounts.google.com/gsi/client" async defer></script>
   </head>
   <body>

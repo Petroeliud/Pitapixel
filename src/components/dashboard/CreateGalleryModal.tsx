@@ -22,6 +22,7 @@ export const CreateGalleryModal: React.FC<CreateGalleryModalProps> = ({
     new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })
   );
   const [password, setPassword] = useState('');
+  const [customSlug, setCustomSlug] = useState('');
 
   if (!isOpen) return null;
 
@@ -29,15 +30,18 @@ export const CreateGalleryModal: React.FC<CreateGalleryModalProps> = ({
     e.preventDefault();
     if (!title.trim()) return;
 
-    // Generate clean, readable album share link slug
-    const slug = title
+    // Generate clean, deterministic unique gallery identifier
+    const cleanedCustom = customSlug.trim().toLowerCase().replace(/[^a-z0-9_-]/g, '');
+    const autoSlug = title
       .trim()
       .toLowerCase()
       .replace(/[^a-z0-9]+/g, '-')
       .replace(/(^-|-$)/g, '');
     const shortSuffix = Math.random().toString(36).substring(2, 6);
-    const shareId = slug ? `${slug}-${shortSuffix}` : `gallery-${shortSuffix}`;
-    const galleryId = `gallery-${Date.now()}`;
+    // Unique deterministic gallery identifier used across paths
+    const uniqueId = cleanedCustom || (autoSlug ? `${autoSlug}-${shortSuffix}` : `gallery-${shortSuffix}`);
+    const galleryId = uniqueId;
+    const shareId = uniqueId;
 
     const newGallery: Gallery = {
       id: galleryId,
@@ -124,6 +128,25 @@ export const CreateGalleryModal: React.FC<CreateGalleryModalProps> = ({
               placeholder="October 11, 2026"
               className="mt-1 w-full rounded-md border border-zinc-200 bg-white px-3 py-2 text-xs text-zinc-900 focus:border-zinc-900 focus:outline-hidden dark:border-zinc-800 dark:bg-zinc-800 dark:text-white dark:focus:border-zinc-100"
             />
+          </div>
+
+          <div>
+            <label className="block text-xs font-medium text-zinc-700 dark:text-zinc-300">
+              Short Link Slug (optional)
+            </label>
+            <div className="mt-1 flex items-center rounded-md border border-zinc-200 bg-white px-3 py-2 text-xs dark:border-zinc-800 dark:bg-zinc-800">
+              <span className="font-mono text-zinc-400 select-none">photos.app/g/</span>
+              <input
+                type="text"
+                value={customSlug}
+                onChange={(e) => setCustomSlug(e.target.value.toLowerCase().replace(/[^a-z0-9_-]/g, ''))}
+                placeholder={title ? title.toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 16) : 'e.g. vijana'}
+                className="w-full bg-transparent font-mono text-zinc-900 focus:outline-hidden dark:text-white ml-0.5"
+              />
+            </div>
+            <p className="mt-1 text-[10px] text-zinc-400">
+              Leave blank to automatically generate a clean short link.
+            </p>
           </div>
 
           <div>
