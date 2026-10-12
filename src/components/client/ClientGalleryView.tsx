@@ -23,7 +23,7 @@ import { DownloadModal } from './DownloadModal';
 import { SaveToCloudModal } from './SaveToCloudModal';
 import { SendSelectionModal } from './SendSelectionModal';
 import { ShareLinkModal } from '../common/ShareLinkModal';
-import { GoogleSignInModal } from '../common/GoogleSignInModal';
+import { ClientDownloadEmailModal } from './ClientDownloadEmailModal';
 import { downloadSinglePhoto } from '../../utils/zipService';
 
 interface ClientGalleryViewProps {
@@ -72,9 +72,26 @@ export const ClientGalleryView: React.FC<ClientGalleryViewProps> = ({
   const [sendSelectionOpen, setSendSelectionOpen] = useState(false);
   const [shareModalOpen, setShareModalOpen] = useState(false);
 
-  // Download Authentication Prompt Modal
-  const [downloadAuthModalOpen, setDownloadAuthModalOpen] = useState(false);
-  const [pendingDownloadAction, setPendingDownloadAction] = useState<(() => void) | null>(null);
+  // Download Email Modal State
+  const [emailModalOpen, setEmailModalOpen] = useState(false);
+  const [pendingDownloadAction, setPendingDownloadAction] = useState<((email: string) => void) | null>(null);
+  const [pendingDownloadCount, setPendingDownloadCount] = useState(1);
+
+  // Helper to trigger action with client email check
+  const triggerWithEmailCheck = (count: number, action: (email: string) => void) => {
+    let savedEmail = '';
+    try {
+      savedEmail = sessionStorage.getItem('pitapixel_client_email') || '';
+    } catch {}
+
+    if (savedEmail) {
+      action(savedEmail);
+    } else {
+      setPendingDownloadCount(count);
+      setPendingDownloadAction(() => action);
+      setEmailModalOpen(true);
+    }
+  };
 
   // Load favorites
   useEffect(() => {
@@ -87,15 +104,6 @@ export const ClientGalleryView: React.FC<ClientGalleryViewProps> = ({
       isMounted = false;
     };
   }, [gallery.id]);
-
-  // Execute pending download once user signs in
-  useEffect(() => {
-    if (user && pendingDownloadAction) {
-      pendingDownloadAction();
-      setPendingDownloadAction(null);
-      setDownloadAuthModalOpen(false);
-    }
-  }, [user, pendingDownloadAction]);
 
   // Handle password submission
   const handlePasswordSubmit = (e: React.FormEvent) => {
@@ -160,46 +168,32 @@ export const ClientGalleryView: React.FC<ClientGalleryViewProps> = ({
     setSelectionMode(false);
   };
 
-  // Download actions (prompts Google sign-in ONLY when client initiates download)
+  // Download actions (prompts Client Email modal if email not saved in session)
   const handleDownloadAll = () => {
-    if (!user) {
-      setPendingDownloadAction(() => () => {
-        setPhotosToDownload(filteredPhotos);
-        setDownloadModalOpen(true);
-      });
-      setDownloadAuthModalOpen(true);
-      return;
-    }
-    setPhotosToDownload(filteredPhotos);
-    setDownloadModalOpen(true);
+    triggerWithEmailCheck(filteredPhotos.length, (email) => {
+      recordActivity(gallery.id, 'download', `Downloaded gallery ZIP (${filteredPhotos.length} photos) · ${email}`);
+      setPhotosToDownload(filteredPhotos);
+      setDownloadModalOpen(true);
+    });
   };
 
   const handleDownloadSelected = () => {
     const selected = photos.filter((p) => selectedPhotoIds.includes(p.id));
-    if (!user) {
-      setPendingDownloadAction(() => () => {
-        setPhotosToDownload(selected);
-        setDownloadModalOpen(true);
-      });
-      setDownloadAuthModalOpen(true);
-      return;
-    }
-    setPhotosToDownload(selected);
-    setDownloadModalOpen(true);
+    triggerWithEmailCheck(selected.length, (email) => {
+      recordActivity(gallery.id, 'download', `Downloaded ${selected.length} selected photos · ${email}`);
+      setPhotosToDownload(selected);
+      setDownloadModalOpen(true);
+    });
   };
 
   const handleSinglePhotoDownload = useCallback(
     (photo: Photo, size: DownloadSize) => {
-      if (!user) {
-        setPendingDownloadAction(() => () => {
-          downloadSinglePhoto(photo, size);
-        });
-        setDownloadAuthModalOpen(true);
-        return;
-      }
-      downloadSinglePhoto(photo, size);
+      triggerWithEmailCheck(1, (email) => {
+        recordActivity(gallery.id, 'download', `Downloaded ${photo.fileName} (${size}) · ${email}`);
+        downloadSinglePhoto(photo, size);
+      });
     },
-    [user]
+    [gallery.id]
   );
 
   // Expired Screen
@@ -602,15 +596,22 @@ export const ClientGalleryView: React.FC<ClientGalleryViewProps> = ({
         photoCount={photos.length}
       />
 
-      {/* Download Authentication Gate Modal: ONLY prompted when client clicks download */}
-      <GoogleSignInModal
-        isOpen={downloadAuthModalOpen}
+      {/* Client Email Download Gate Modal */}
+      <ClientDownloadEmailModal
+        isOpen={emailModalOpen}
         onClose={() => {
-          setDownloadAuthModalOpen(false);
+          setEmailModalOpen(false);
           setPendingDownloadAction(null);
         }}
         galleryTitle={gallery.title}
         coverThumbUrl={coverPhoto?.urls.thumb}
+        photoCount={pendingDownloadCount}
+        onConfirm={(email) => {
+          if (pendingDownloadAction) {
+            pendingDownloadAction(email);
+            setPendingDownloadAction(null);
+          }
+        }}
       />
 
       {/* Discreet Client Footer: Clean and minimal */}

@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from 'react';
-import { Copy, Check, Eye, Download, Heart, Clock } from 'lucide-react';
+import React, { useState, useEffect, useMemo } from 'react';
+import { Copy, Check, Eye, Download, Heart, Clock, Mail, Users } from 'lucide-react';
 import { Gallery, Photo, ActivityEvent } from '../../types';
 import { getActivities, getFavorites } from '../../storage/db';
 
@@ -28,10 +28,36 @@ export const ActivityTab: React.FC<ActivityTabProps> = ({ gallery, photos }) => 
     setTimeout(() => setCopiedFormat(null), 2000);
   };
 
+  // Extract client downloader email analytics from activity log
+  const clientDownloaders = useMemo(() => {
+    const map = new Map<string, { email: string; count: number; lastTimestamp: string; details: string[] }>();
+
+    activities.forEach((act) => {
+      if (act.type === 'download' && act.details) {
+        // Match email address pattern inside activity details
+        const emailMatch = act.details.match(/([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})/);
+        if (emailMatch) {
+          const email = emailMatch[1].toLowerCase().trim();
+          const existing = map.get(email) || { email, count: 0, lastTimestamp: act.timestamp, details: [] };
+          existing.count += 1;
+          existing.details.push(act.details);
+          if (new Date(act.timestamp).getTime() > new Date(existing.lastTimestamp).getTime()) {
+            existing.lastTimestamp = act.timestamp;
+          }
+          map.set(email, existing);
+        }
+      }
+    });
+
+    return Array.from(map.values()).sort(
+      (a, b) => new Date(b.lastTimestamp).getTime() - new Date(a.lastTimestamp).getTime()
+    );
+  }, [activities]);
+
   return (
     <div className="space-y-8">
       {/* 1. Metric Overview Cards */}
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-4">
         <div className="rounded-lg border border-zinc-200 bg-white p-5 dark:border-zinc-800 dark:bg-zinc-900">
           <div className="flex items-center justify-between">
             <span className="text-xs font-medium text-zinc-500 dark:text-zinc-400">
@@ -50,15 +76,30 @@ export const ActivityTab: React.FC<ActivityTabProps> = ({ gallery, photos }) => 
         <div className="rounded-lg border border-zinc-200 bg-white p-5 dark:border-zinc-800 dark:bg-zinc-900">
           <div className="flex items-center justify-between">
             <span className="text-xs font-medium text-zinc-500 dark:text-zinc-400">
-              Downloads
+              Total Downloads
             </span>
             <Download className="h-4 w-4 text-zinc-400" />
           </div>
           <div className="mt-2 text-2xl font-semibold font-mono tabular-nums text-zinc-900 dark:text-white">
-            {gallery.downloadCount}
+            {gallery.downloadCount || activities.filter((a) => a.type === 'download').length}
           </div>
           <p className="mt-1 text-[11px] text-zinc-400">
-            Individual & batch ZIP downloads
+            Photos & ZIP files downloaded
+          </p>
+        </div>
+
+        <div className="rounded-lg border border-zinc-200 bg-white p-5 dark:border-zinc-800 dark:bg-zinc-900">
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-medium text-zinc-500 dark:text-zinc-400">
+              Unique Downloaders
+            </span>
+            <Users className="h-4 w-4 text-emerald-500" />
+          </div>
+          <div className="mt-2 text-2xl font-semibold font-mono tabular-nums text-zinc-900 dark:text-white">
+            {clientDownloaders.length}
+          </div>
+          <p className="mt-1 text-[11px] text-zinc-400">
+            Clients who entered email
           </p>
         </div>
 
@@ -73,12 +114,75 @@ export const ActivityTab: React.FC<ActivityTabProps> = ({ gallery, photos }) => 
             {favoritedPhotos.length}
           </div>
           <p className="mt-1 text-[11px] text-zinc-400">
-            Hearted by client for album review
+            Hearted by clients
           </p>
         </div>
       </div>
 
-      {/* 2. Client Favorites & Export */}
+      {/* 2. Client Download Analytics Table */}
+      <div className="rounded-lg border border-zinc-200 bg-white p-6 dark:border-zinc-800 dark:bg-zinc-900">
+        <div className="pb-4 border-b border-zinc-100 dark:border-zinc-800 flex items-center justify-between">
+          <div>
+            <h3 className="text-sm font-semibold text-zinc-900 dark:text-white flex items-center gap-2">
+              <Mail className="h-4 w-4 text-zinc-400" />
+              <span>Client Download Records ({clientDownloaders.length})</span>
+            </h3>
+            <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">
+              Verified client email addresses entered prior to downloading
+            </p>
+          </div>
+        </div>
+
+        {clientDownloaders.length === 0 ? (
+          <div className="py-8 text-center text-xs text-zinc-400">
+            No client downloads recorded with email yet.
+          </div>
+        ) : (
+          <div className="mt-4 overflow-x-auto">
+            <table className="w-full text-left text-xs">
+              <thead>
+                <tr className="border-b border-zinc-200 text-zinc-400 font-mono text-[11px] dark:border-zinc-800">
+                  <th className="pb-2.5 font-normal">Client Email</th>
+                  <th className="pb-2.5 font-normal text-center">Downloads</th>
+                  <th className="pb-2.5 font-normal">Latest Download Activity</th>
+                  <th className="pb-2.5 font-normal text-right">Date & Time</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-zinc-100 dark:divide-zinc-800/60">
+                {clientDownloaders.map((client) => (
+                  <tr key={client.email} className="hover:bg-zinc-50/50 dark:hover:bg-zinc-800/30">
+                    <td className="py-3 font-mono font-medium text-zinc-900 dark:text-zinc-100">
+                      {client.email}
+                    </td>
+                    <td className="py-3 text-center">
+                      <span className="inline-flex items-center rounded-full bg-emerald-50 px-2.5 py-0.5 text-[11px] font-mono font-semibold text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300">
+                        {client.count} {client.count === 1 ? 'event' : 'events'}
+                      </span>
+                    </td>
+                    <td className="py-3 text-zinc-600 dark:text-zinc-300 truncate max-w-xs">
+                      {client.details[0] || 'Downloaded photos'}
+                    </td>
+                    <td className="py-3 text-right font-mono text-[11px] text-zinc-400 whitespace-nowrap">
+                      {new Date(client.lastTimestamp).toLocaleDateString([], {
+                        month: 'short',
+                        day: 'numeric',
+                        year: 'numeric',
+                      })}{' '}
+                      at{' '}
+                      {new Date(client.lastTimestamp).toLocaleTimeString([], {
+                        hour: '2-digit',
+                        minute: '2-digit',
+                      })}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      {/* 3. Client Favorites & Export */}
       <div className="rounded-lg border border-zinc-200 bg-white p-6 dark:border-zinc-800 dark:bg-zinc-900">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-zinc-100 dark:border-zinc-800">
           <div>
@@ -94,7 +198,7 @@ export const ActivityTab: React.FC<ActivityTabProps> = ({ gallery, photos }) => 
             <div className="flex items-center gap-2">
               <button
                 onClick={() => handleCopyFileNames('comma')}
-                className="flex items-center gap-1.5 rounded-md border border-zinc-200 px-3 py-1.5 text-xs font-medium text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800"
+                className="flex items-center gap-1.5 rounded-md border border-zinc-200 px-3 py-1.5 text-xs font-medium text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800 cursor-pointer"
               >
                 {copiedFormat === 'comma' ? (
                   <Check className="h-3.5 w-3.5 text-emerald-500" />
@@ -106,7 +210,7 @@ export const ActivityTab: React.FC<ActivityTabProps> = ({ gallery, photos }) => 
 
               <button
                 onClick={() => handleCopyFileNames('newline')}
-                className="flex items-center gap-1.5 rounded-md bg-zinc-900 px-3 py-1.5 text-xs font-medium text-white hover:bg-zinc-800 dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-white"
+                className="flex items-center gap-1.5 rounded-md bg-zinc-900 px-3 py-1.5 text-xs font-medium text-white hover:bg-zinc-800 dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-white cursor-pointer"
               >
                 {copiedFormat === 'newline' ? (
                   <Check className="h-3.5 w-3.5 text-emerald-500" />
@@ -149,7 +253,7 @@ export const ActivityTab: React.FC<ActivityTabProps> = ({ gallery, photos }) => 
         )}
       </div>
 
-      {/* 3. Activity History Feed */}
+      {/* 4. Activity History Feed */}
       <div className="rounded-lg border border-zinc-200 bg-white p-6 dark:border-zinc-800 dark:bg-zinc-900">
         <h3 className="text-sm font-semibold text-zinc-900 dark:text-white pb-4 border-b border-zinc-100 dark:border-zinc-800">
           Activity Log
@@ -171,7 +275,7 @@ export const ActivityTab: React.FC<ActivityTabProps> = ({ gallery, photos }) => 
                     {act.type === 'view' ? (
                       <Eye className="h-3 w-3" />
                     ) : act.type === 'download' ? (
-                      <Download className="h-3 w-3" />
+                      <Download className="h-3 w-3 text-emerald-600 dark:text-emerald-400" />
                     ) : act.type === 'favorite' ? (
                       <Heart className="h-3 w-3 text-rose-500" />
                     ) : (

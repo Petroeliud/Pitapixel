@@ -178,9 +178,32 @@ export function generateUploadSignature(galleryId: string) {
 }
 
 /**
- * List all galleries by querying raw meta.json resources in Cloudinary
+ * List all galleries by querying subfolders and raw meta.json resources in Cloudinary
  */
 export async function listAllGalleries(): Promise<GalleryMeta[]> {
+  const metaMap = new Map<string, GalleryMeta>();
+
+  // Method 1: Get subfolders under clients/
+  try {
+    const folderResult = await cloudinary.api.sub_folders('clients');
+    if (folderResult && Array.isArray(folderResult.folders)) {
+      await Promise.all(
+        folderResult.folders.map(async (folder: any) => {
+          const galleryId = folder.name || folder.path?.split('/')?.pop();
+          if (galleryId) {
+            const meta = await getGalleryMeta(galleryId);
+            if (meta) {
+              metaMap.set(meta.id || galleryId, meta);
+            }
+          }
+        })
+      );
+    }
+  } catch (err) {
+    // Non-fatal if clients folder is empty
+  }
+
+  // Method 2: Raw resources lookup with prefix clients/
   try {
     let allResources: any[] = [];
     let nextCursor: string | undefined = undefined;
@@ -188,6 +211,7 @@ export async function listAllGalleries(): Promise<GalleryMeta[]> {
     do {
       const result = await cloudinary.api.resources({
         resource_type: 'raw',
+        type: 'upload',
         prefix: 'clients/',
         max_results: 100,
         next_cursor: nextCursor,
@@ -201,23 +225,26 @@ export async function listAllGalleries(): Promise<GalleryMeta[]> {
 
     const metaFiles = allResources.filter((r) => r.public_id.endsWith('/meta.json'));
 
-    const galleries = await Promise.all(
+    await Promise.all(
       metaFiles.map(async (res) => {
         try {
-          const resp = await fetch(res.secure_url);
-          if (resp.ok) {
-            return await resp.json();
+          const galleryId = res.public_id.replace(/^clients\//, '').replace(/\/meta\.json$/, '');
+          if (!metaMap.has(galleryId)) {
+            const meta = await getGalleryMeta(galleryId);
+            if (meta) {
+              metaMap.set(meta.id || galleryId, meta);
+            }
           }
         } catch {}
-        return null;
       })
     );
-
-    return galleries.filter(Boolean) as GalleryMeta[];
-  } catch (error) {
-    console.error('Error listing galleries from Cloudinary:', error);
-    return [];
+  } catch (err) {
+    console.warn('Error listing raw gallery resources:', err);
   }
+
+  const list = Array.from(metaMap.values());
+  list.sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
+  return list;
 }
 
 /**

@@ -1,18 +1,37 @@
 import { CLOUD_NAME } from './cloudinaryUrls';
 import { Gallery, Photo } from '../types';
 
-let adminPasswordToken: string | null = null;
+const ADMIN_TOKEN_KEY = 'pitapixel_admin_token';
+
+let adminPasswordToken: string | null = (() => {
+  try {
+    return sessionStorage.getItem(ADMIN_TOKEN_KEY);
+  } catch {
+    return null;
+  }
+})();
 
 export function setAdminPasswordToken(password: string) {
   adminPasswordToken = password;
+  try {
+    sessionStorage.setItem(ADMIN_TOKEN_KEY, password);
+  } catch {}
 }
 
 export function getAdminPasswordToken(): string | null {
+  if (!adminPasswordToken) {
+    try {
+      adminPasswordToken = sessionStorage.getItem(ADMIN_TOKEN_KEY);
+    } catch {}
+  }
   return adminPasswordToken;
 }
 
 export function clearAdminPasswordToken() {
   adminPasswordToken = null;
+  try {
+    sessionStorage.removeItem(ADMIN_TOKEN_KEY);
+  } catch {}
 }
 
 function getAuthHeaders(): Record<string, string> {

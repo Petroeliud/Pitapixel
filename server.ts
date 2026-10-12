@@ -1,5 +1,6 @@
 import express from 'express';
 import path from 'path';
+import fs from 'fs';
 import { fileURLToPath } from 'url';
 import dotenv from 'dotenv';
 import crypto from 'crypto';
@@ -37,6 +38,115 @@ function requireAdmin(req: express.Request, res: express.Response, next: express
   res.status(401).json({ error: 'Unauthorized: Invalid admin password' });
 }
 
+function escapeHtml(str: string): string {
+  if (!str) return '';
+  return str
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+/**
+ * OpenGraph Link Preview Server-Side Handler for /g/{shareId}
+ */
+async function renderGalleryHtmlPage(req: express.Request, res: express.Response) {
+  const rawId = req.params.shareId || '';
+  const shareId = rawId ? rawId.split('?')[0].split('#')[0].replace(/\/$/, '').trim() : '';
+
+  const cloudName = process.env.CLOUDINARY_CLOUD_NAME || 'bzimyrvw';
+  const baseUrl = (process.env.APP_URL || `${req.protocol}://${req.get('host')}`).replace(/\/$/, '');
+  const canonicalUrl = `${baseUrl}/g/${encodeURIComponent(shareId)}`;
+
+  // Default neutral 1200x630 dark fallback preview image
+  const neutralImage = `https://res.cloudinary.com/${cloudName}/image/upload/w_1200,h_630,c_fill,b_rgb:09090b,q_auto,f_jpg/sample`;
+
+  let ogTitle = 'Gallery Not Found';
+  let ogDesc = 'The requested client photo gallery link is not available or has expired.';
+  let ogImage = neutralImage;
+
+  if (shareId) {
+    try {
+      const meta = await getGalleryMeta(shareId);
+      if (meta) {
+        const isExpired = meta.expiresAt
+          ? new Date(meta.expiresAt).getTime() < Date.now()
+          : false;
+
+        if (isExpired) {
+          ogTitle = 'Gallery Expired';
+          ogDesc = 'This photo gallery link is no longer available.';
+          ogImage = neutralImage;
+        } else if (meta.password) {
+          // Password-protected galleries: MUST NOT expose cover photo or details
+          ogTitle = 'Private gallery';
+          ogDesc = 'This photo gallery is password protected.';
+          ogImage = neutralImage;
+        } else {
+          // Public active gallery
+          const photos = await getGalleryPhotos(shareId);
+          ogTitle = escapeHtml(meta.title);
+
+          const clientText = meta.clientName ? `${escapeHtml(meta.clientName)} · ` : '';
+          const photoCount = photos.length;
+          ogDesc = `${clientText}${photoCount} ${photoCount === 1 ? 'photo' : 'photos'} delivered`;
+
+          // Cover photo 1200x630 JPEG preview image
+          const coverPhoto = photos.find((p) => p.id === meta.coverPhotoId) || photos[0];
+          if (coverPhoto) {
+            const coverPublicId = coverPhoto.publicId || coverPhoto.id;
+            ogImage = `https://res.cloudinary.com/${cloudName}/image/upload/w_1200,h_630,c_fill,q_auto,f_jpg/${coverPublicId}`;
+          }
+        }
+      }
+    } catch (err) {
+      console.error(`Error generating link preview for /g/${shareId}:`, err);
+    }
+  }
+
+  // Find index.html template
+  let indexPath = path.resolve(__dirname, 'index.html');
+  if (!fs.existsSync(indexPath)) {
+    indexPath = path.resolve(__dirname, 'dist', 'index.html');
+  }
+
+  let htmlTemplate = '';
+  try {
+    htmlTemplate = fs.readFileSync(indexPath, 'utf-8');
+  } catch (err) {
+    htmlTemplate = `<!doctype html><html><head><title>${ogTitle}</title></head><body><div id="root"></div></body></html>`;
+  }
+
+  // Construct OpenGraph and Twitter card tags
+  const ogMetaTags = `
+    <title>${ogTitle} — Pitapixel</title>
+    <meta name="description" content="${ogDesc}" />
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content="${ogTitle}" />
+    <meta property="og:description" content="${ogDesc}" />
+    <meta property="og:image" content="${ogImage}" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta property="og:url" content="${canonicalUrl}" />
+    <meta property="og:site_name" content="Pitapixel Studio" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="${ogTitle}" />
+    <meta name="twitter:description" content="${ogDesc}" />
+    <meta name="twitter:image" content="${ogImage}" />
+  `;
+
+  let finalHtml = htmlTemplate.replace(/<title>.*?<\/title>/i, '');
+  finalHtml = finalHtml.replace('</head>', `${ogMetaTags}\n</head>`);
+
+  res.setHeader('Content-Type', 'text/html; charset=utf-8');
+  res.status(200).send(finalHtml);
+}
+
+// Route for gallery link previews
+app.get('/g/:shareId', renderGalleryHtmlPage);
+app.get('/g/:shareId/*', renderGalleryHtmlPage);
+
 /**
  * Admin Login Endpoint
  */
@@ -61,7 +171,6 @@ app.post('/api/galleries', requireAdmin, async (req, res) => {
       return;
     }
 
-    // Generate unguessable random ID (12 characters) or clean custom slug
     const randomHex = crypto.randomBytes(6).toString('hex');
     let galleryId = randomHex;
 
@@ -131,14 +240,12 @@ app.get('/api/galleries/:id', async (req, res) => {
       return;
     }
 
-    // 1. Fetch meta.json
     const meta = await getGalleryMeta(galleryId);
     if (!meta) {
       res.status(404).json({ error: 'Gallery not found' });
       return;
     }
 
-    // 2. Fetch photos from Cloudinary
     const photos = await getGalleryPhotos(galleryId);
 
     // Increment view count asynchronously in meta
@@ -267,14 +374,30 @@ app.post('/api/ai/smart-frame', async (req, res) => {
     }
 
     let mimeType = 'image/jpeg';
-    let base64Data = imageData;
+    let base64Data = '';
 
-    if (imageData.startsWith('data:')) {
+    if (imageData.startsWith('http://') || imageData.startsWith('https://')) {
+      // Fetch image bytes from HTTP URL and convert to Base64
+      const imgRes = await fetch(imageData);
+      if (!imgRes.ok) {
+        throw new Error(`Failed to fetch image from URL: ${imgRes.status} ${imgRes.statusText}`);
+      }
+      const contentType = imgRes.headers.get('content-type');
+      if (contentType) {
+        mimeType = contentType.split(';')[0];
+      }
+      const arrayBuffer = await imgRes.arrayBuffer();
+      base64Data = Buffer.from(arrayBuffer).toString('base64');
+    } else if (imageData.startsWith('data:')) {
       const match = imageData.match(/^data:([^;]+);base64,(.+)$/);
       if (match) {
         mimeType = match[1];
         base64Data = match[2];
+      } else {
+        base64Data = imageData.split(',')[1] || imageData;
       }
+    } else {
+      base64Data = imageData;
     }
 
     const imagePart = {

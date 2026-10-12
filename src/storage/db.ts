@@ -116,9 +116,9 @@ export async function deletePhoto(photoId: string, galleryId?: string): Promise<
 export async function getPhotographer(): Promise<Photographer> {
   return {
     id: SEED_PHOTOGRAPHER_ID,
-    name: 'Julian Vance',
-    brandName: 'Julian Vance Photography',
-    email: 'julian@vancephoto.com',
+    name: 'Eliud Petro',
+    brandName: 'Pitapixel Studio',
+    email: 'petroeliud04@gmail.com',
     createdAt: new Date().toISOString(),
   };
 }
